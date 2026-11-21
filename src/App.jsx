@@ -16,12 +16,11 @@ function readStorage(key, fallback) {
 function App() {
   const [portal, setPortal] = useState('reviewer')
   const [movies, setMovies] = useState(() => readStorage('mra-movies', seedMovies))
-  const [reviews, setReviews] = useState(() => readStorage('mra-reviews', []))
+  const [reviews, setReviews] = useState([])
   const [selectedMovie, setSelectedMovie] = useState(null)
   const [toast, setToast] = useState('')
 
   useEffect(() => localStorage.setItem('mra-movies', JSON.stringify(movies)), [movies])
-  useEffect(() => localStorage.setItem('mra-reviews', JSON.stringify(reviews)), [reviews])
 
   useEffect(() => {
     async function loadSupabaseData() {
@@ -30,15 +29,21 @@ function App() {
         .select('*')
         .order('id')
 
-      if (!movieError && dbMovies?.length) setMovies(dbMovies)
+      if (movieError) {
+        console.error('Could not load movies:', movieError)
+      } else if (dbMovies?.length) {
+        setMovies(dbMovies)
+      }
 
       const { data: dbReviews, error: reviewError } = await supabase
         .from('reviews')
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (!reviewError && dbReviews) {
-        setReviews(dbReviews.map((review) => ({
+      if (reviewError) {
+        console.error('Could not load reviews:', reviewError)
+      } else {
+        setReviews((dbReviews || []).map((review) => ({
           ...review,
           createdAt: review.created_at,
           movieTitle: review.movie_title,
@@ -48,6 +53,23 @@ function App() {
     }
 
     loadSupabaseData()
+
+    const channel = supabase
+      .channel('review-submissions')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reviews' }, (payload) => {
+        const review = payload.new
+        setReviews((current) => [{
+          ...review,
+          createdAt: review.created_at,
+          movieTitle: review.movie_title,
+          movieId: review.movie_id,
+        }, ...current.filter((item) => item.id !== review.id)])
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   function showToast(message) {
@@ -94,7 +116,8 @@ function App() {
               .single()
 
             if (error) {
-              showToast('Could not submit review. Check the database setup.')
+              console.error('Could not submit review:', error)
+              showToast(`Review not saved: ${error.message}`)
               return
             }
 

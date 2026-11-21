@@ -46,6 +46,20 @@ grant select, insert on public.reviews to anon, authenticated;
 grant usage, select on sequence public.movies_id_seq to anon, authenticated;
 grant usage, select on sequence public.reviews_id_seq to anon, authenticated;
 
+-- Allow live updates for reviewer submissions (safe to rerun)
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'reviews'
+  ) then
+    alter publication supabase_realtime add table public.reviews;
+  end if;
+end $$;
+
 insert into public.movies (title, genre, year, duration, director, description, accent, symbol)
 select seed.title, seed.genre, seed.year, seed.duration, seed.director, seed.description, seed.accent, seed.symbol
 from (values
